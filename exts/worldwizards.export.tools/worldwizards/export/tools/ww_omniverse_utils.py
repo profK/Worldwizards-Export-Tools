@@ -3,6 +3,7 @@ from omni import usd
 import os
 import omni
 import carb
+from omni.kit.window.file_exporter import get_file_exporter
 
 
 def get_ext_root_path(extname:str):
@@ -36,6 +37,16 @@ def set_prim_visibility(prim:Usd.Prim,visible:bool = True):
         imageable.MakeInvisible()
     else:
         imageable.MakeVisible()
+
+def get_directory(root:str,callback_fn) -> None  :
+    file_exporter = get_file_exporter()
+    file_exporter.show_window(
+        title="Save components to ...",
+        export_button_label="Choose",
+        # The callback function called after the user has selected an export location.
+        export_handler=callback_fn,
+        filename_url="root"
+    )       
 
 class ExtensionFramework(omni.ext.IExt):
 
