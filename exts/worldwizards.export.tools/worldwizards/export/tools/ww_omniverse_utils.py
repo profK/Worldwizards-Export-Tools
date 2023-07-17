@@ -4,6 +4,7 @@ import os
 import omni
 import carb
 from omni.kit.window.file_exporter import get_file_exporter
+import asyncio
 
 
 def get_ext_root_path(extname:str):
@@ -38,25 +39,37 @@ def set_prim_visibility(prim:Usd.Prim,visible:bool = True):
     else:
         imageable.MakeVisible()
 
-def get_directory(root:str,callback_fn) -> None  :
+
+
+async def get_directory_async(root:str) -> str  :
     file_exporter = get_file_exporter()
-    file_exporter.show_window(
+    dir_name=None
+    def cb(filename, dirname, extension, selections): 
+        nonlocal dir_name 
+        dir_name= dirname 
+     
+    file_exporter.show_window( 
         title="Save components to ...",
         export_button_label="Choose",
+        filename_url="root",
         # The callback function called after the user has selected an export location.
-        export_handler=callback_fn,
-        filename_url="root"
-    )       
+        export_handler= cb
+    )
+    while dir_name is None:
+        await asyncio.sleep(0.1)
+
+    print("selected dir "+dir_name)    
+    return dir_name 
 
 class ExtensionFramework(omni.ext.IExt):
 
-        
     # ext_id is current extension id. It can be used with extension manager to query additional information, like where
     # this extension is located on filesystem.
     def on_startup(self, ext_id):
         print("[extension.framework] extension framework startup")
         self._usd_context = omni.usd.get_context()
         self._selection = self._usd_context.get_selection()
+        self._stage = get_current_stage() # none first time
         self._events = self._usd_context.get_stage_event_stream()
         self._ext_Id = ext_id 
         self._stage_event_sub = \

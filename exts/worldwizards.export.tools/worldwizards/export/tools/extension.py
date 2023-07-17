@@ -1,9 +1,11 @@
+from asyncio import Future, Task
 import carb
 import omni.ext
 import omni.ui as ui
 from .ww_omniverse_utils import *
 import os
 import shutil
+from pxr import Usd,UsdShade
 
 
 
@@ -12,6 +14,19 @@ def some_public_function(x: int):
     print("[worldwizards.export.tools] some_public_function was called with x: ", x)
     return x ** x
 
+def recurse_list_components(prim:Usd.Prim, components:list):
+    if (prim.GetTypeName()=="Component"):
+        components.append(prim.GetPath())
+    else:
+        for child in prim.GetChildren():
+            recurse_list_components(child,components)
+
+def recurse_list_material_paths(prim:Usd.Prim, materials:list):
+   if (prim.GetTypeName()=="Mesh"):
+            material:UsdShade.MaterialBindingAPI = \
+                UsdShade.MaterialBindingAPI(prim)
+            if material.HasMaterialPath():
+                materials.append(material.GetMaterialPath())             
 
 # Any class derived from `omni.ext.IExt` in top level module (defined in `python.modules` of `extension.toml`) will be
 # instantiated when extension gets enabled and `on_startup(ext_id)` will be called. Later when extension gets disabled
@@ -27,40 +42,71 @@ class WorldwizardsExportToolsExtension(ExtensionFramework):
         return super().on_startup(ext_id) 
 
     def on_stage_opened(self, event: carb.events.IEvent):
-       
-    
         return super().on_stage_opened(event)  
-    
-    def _export_components(self):
-        filepath:str = self._stage.GetRootLayer().realPath
+     
+    def _export_components(self, event, *args):
+        print("INFO:Export components called")
+        task:Task = \
+            asyncio.create_task(self._export_components_async(event, *args))
+
+  
+    async def _export_components_async(self, event, *args):
+        filepath:str = get_current_stage().GetRootLayer().realPath
         if filepath is None:
             print("Could not find root layer path "+filepath)
             return;
-        materialsPath:str = os.path.join(os.path.dirname(filepath),".materials")
-        if not os.path.exists(materialsPath):
-            print("Could not find materials file "+materialsPath)
-            return;
-        get_directory("/",lambda path: self._export_components_callback(
-                                        path,materialsPath))
-
-    def _export_components_callback(self,outRoot:str, materialsPath:str): 
+        materials_path:str = os.path.join(os.path.dirname(filepath),"Materials")
+        if not os.path.exists(materials_path):
+            print("Could not find materials file "+materials_path)
+            return; 
         #copy materials to output root
-        shutil.copytree(materialsPath,os.path.join(outRoot,".materials"))
-        root:Usd.Prim = self._stage.GetPseudoRoot()
-        self._recurse_export_components(root,outRoot)    
+        new_root = await get_directory_async("/")
+        if new_root is None:
+            print("User canceled output ")
+            return;
+        shutil.copytree(materials_path,os.path.join(new_root,"Materials"))
+        root:Usd.Prim = get_current_stage().GetPseudoRoot()
+        components:list = []
+        recurse_list_components(root,components) 
+        for component in components:
+            self.export_component(component,new_root)
+        print("Exported "+str(len(components))+" components to "+new_root)
+    
+    def export_component(self,prim:Usd.Prim, outDir:str):
+        if (prim.GetTypeName()!="Component"):
+            print("Not a component "+prim.GetPath())
+            return
+        #localize materials
+        materail_paths_list = []
+        recurse_list_material_paths(prim,materail_paths_list)
+        for material_path in materail_paths_list:
+            self._localize_material(prim,material_path)
+        #create directory
+        componentPath:str = prim.GetPath()
+        componentDir:str = os.path.join(outDir,componentPath)
+        os.makedirs(componentDir)
+        '''#export prim
+        self.export_prim(componentPath)
+        #export materials
+        self.export_materials(componentPath,componentDir)
+        #export textures
+        self.export_textures(componentPath,componentDir)
+        #export meshes
+        self.export_meshes(componentPath,componentDir)
+        '''
 
-    def _recurse_export_components(self,prim:Usd.Prim, outRoot:str):
-            if (prim.GetTypeName()=="Component"):
-                self._export_component(prim,outRoot)
-            else: #maake a directory
-                dirname:str = os.path.join(outRoot,prim.GetName())
-                shutil.mkdir(dirname)
-                for child in prim.GetChildren():
-                    self._recurse_export_components(child,dirname)
+    def _localize_material(self,prim:Usd.Prim, material_path:str):
+        material:UsdShade.Material = UsdShade.Material(prim.GetStage().GetPrimAtPath(material_path))
+        material_name:str = material.GetName()
+        prim_path:str = prim.GetPath()
+        new_material_path: str = prim_path +"/"+material_name
+        if not material_path == new_material_path:
+            Usd.Prim.duplicate(material_path,new_material_path)
+            materialApi:UsdShade.MaterialBindingAPI = \
+                    UsdShade.MaterialBindingAPI(prim)
+            materialApi.Bind(new_material_path)
 
-    def _export_component(self,prim:Usd.Prim, outDir:str):
-           
     def export_prim(self, path):
-        prim:Usd.Prim = self._stage.GetPrimAtPath(path)
+        prim:Usd.Prim = get_current_stage().GetPrimAtPath(path)
         
         
