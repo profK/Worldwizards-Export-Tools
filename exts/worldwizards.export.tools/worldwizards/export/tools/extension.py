@@ -15,7 +15,10 @@ def some_public_function(x: int):
     return x ** x
 
 def recurse_list_components(prim:Usd.Prim, components:list):
-    if (prim.GetTypeName()=="Component"):
+    kindAPI = Usd.ModelAPI(prim)
+    print("Prim kind = "+kindAPI.GetKind())
+    if (kindAPI.GetKind()=="component"):
+        print("Found component "+str(prim.GetPath()))
         components.append(prim.GetPath())
     else:
         for child in prim.GetChildren():
@@ -64,13 +67,17 @@ class WorldwizardsExportToolsExtension(ExtensionFramework):
         if new_root is None:
             print("User canceled output ")
             return;
-        shutil.copytree(materials_path,os.path.join(new_root,"Materials"))
+        new_materials_path = os.path.join(new_root,"Materials")
+        if os.path.exists(new_materials_path):
+            shutil.rmtree(new_materials_path)
+        shutil.copytree(materials_path,new_materials_path)
         root:Usd.Prim = get_current_stage().GetPseudoRoot()
         components:list = []
         recurse_list_components(root,components) 
+        print("INFO: Components in tree:"+str(components))
         for component in components:
             self.export_component(component,new_root)
-        print("Exported "+str(len(components))+" components to "+new_root)
+        print("INFO: Exported "+str(len(components))+" components to "+new_root)
     
     def export_component(self,prim:Usd.Prim, outDir:str):
         if (prim.GetTypeName()!="Component"):
@@ -84,6 +91,7 @@ class WorldwizardsExportToolsExtension(ExtensionFramework):
         #create directory
         componentPath:str = prim.GetPath()
         componentDir:str = os.path.join(outDir,componentPath)
+        print("component dir "+componentDir)
         os.makedirs(componentDir)
         '''#export prim
         self.export_prim(componentPath)
@@ -96,6 +104,7 @@ class WorldwizardsExportToolsExtension(ExtensionFramework):
         '''
 
     def _localize_material(self,prim:Usd.Prim, material_path:str):
+        print("copying material from"+prim.GetPath()+" to "+material_path)
         material:UsdShade.Material = UsdShade.Material(prim.GetStage().GetPrimAtPath(material_path))
         material_name:str = material.GetName()
         prim_path:str = prim.GetPath()
