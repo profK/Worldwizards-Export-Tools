@@ -14,10 +14,13 @@ def some_public_function(x: int):
     print("[worldwizards.export.tools] some_public_function was called with x: ", x)
     return x ** x
 
-def recurse_list_components(prim:Usd.Prim, components:list):
+def get_kind(prim:Usd.Prim):
     kindAPI = Usd.ModelAPI(prim)
-    print("Prim kind = "+kindAPI.GetKind())
-    if (kindAPI.GetKind()=="component"):
+    return kindAPI.GetKind()
+
+def recurse_list_components(prim:Usd.Prim, components:list):
+
+    if (get_kind(prim)=="component"):
         print("Found component "+str(prim.GetPath()))
         components.append(prim.GetPath())
     else:
@@ -25,7 +28,7 @@ def recurse_list_components(prim:Usd.Prim, components:list):
             recurse_list_components(child,components)
 
 def recurse_list_material_paths(prim:Usd.Prim, materials:list):
-   if (prim.GetTypeName()=="Mesh"):
+   if (prim.GetTypeName()=="mesh"):
             material:UsdShade.MaterialBindingAPI = \
                 UsdShade.MaterialBindingAPI(prim)
             if material.HasMaterialPath():
@@ -72,25 +75,28 @@ class WorldwizardsExportToolsExtension(ExtensionFramework):
             shutil.rmtree(new_materials_path)
         shutil.copytree(materials_path,new_materials_path)
         root:Usd.Prim = get_current_stage().GetPseudoRoot()
-        components:list = []
-        recurse_list_components(root,components) 
-        print("INFO: Components in tree:"+str(components))
-        for component in components:
+        component_paths:list = []
+        recurse_list_components(root,component_paths) 
+        print("INFO: Components in tree:"+str(component_paths))
+        for path in component_paths:
+            component:Usd.Prim = get_current_stage().GetPrimAtPath(path)
+
             self.export_component(component,new_root)
-        print("INFO: Exported "+str(len(components))+" components to "+new_root)
+        print("INFO: Exported "+str(len(component_paths))+" components to "+new_root)
     
     def export_component(self,prim:Usd.Prim, outDir:str):
-        if (prim.GetTypeName()!="Component"):
-            print("Not a component "+prim.GetPath())
+        print("INFO: Exporting component "+str(prim.GetPath()))
+        if not (get_kind(prim)=="component"):
+            print("Not a component "+str(prim.GetPath()))
             return
         #localize materials
-        materail_paths_list = []
-        recurse_list_material_paths(prim,materail_paths_list)
-        for material_path in materail_paths_list:
+        material_paths_list = []
+        recurse_list_material_paths(prim,material_paths_list)
+        for material_path in material_paths_list:
             self._localize_material(prim,material_path)
         #create directory
         componentPath:str = prim.GetPath()
-        componentDir:str = os.path.join(outDir,componentPath)
+        componentDir:str = os.path.join(outDir,str(componentPath))
         print("component dir "+componentDir)
         os.makedirs(componentDir)
         '''#export prim
