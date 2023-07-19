@@ -1,10 +1,12 @@
 from asyncio import Future, Task
+import traceback
 import carb
 import omni.ext
 import omni.ui as ui
 from .ww_omniverse_utils import *
 import os
 import shutil
+from omni import usd
 from pxr import Usd,UsdShade
 
 
@@ -28,11 +30,17 @@ def recurse_list_components(prim:Usd.Prim, components:list):
             recurse_list_components(child,components)
 
 def recurse_list_material_paths(prim:Usd.Prim, materials:list):
-   if (prim.GetTypeName()=="mesh"):
-            material:UsdShade.MaterialBindingAPI = \
+    print("recurse_list_material_paths "+str(prim.GetPath())+
+            " type "+prim.GetTypeName())
+    if (prim.GetTypeName()=="Mesh"):
+            materialAPI:UsdShade.MaterialBindingAPI = \
                 UsdShade.MaterialBindingAPI(prim)
-            if material.HasMaterialPath():
-                materials.append(material.GetMaterialPath())             
+            material: UsdShade.Material = materialAPI.ComputeBoundMaterial()[0]
+            if not material is None:
+                #print("material "+str(material.GetPath()))
+                materials.append(material)
+    for child in prim.GetChildren():
+        recurse_list_material_paths(child,materials)                       
 
 # Any class derived from `omni.ext.IExt` in top level module (defined in `python.modules` of `extension.toml`) will be
 # instantiated when extension gets enabled and `on_startup(ext_id)` will be called. Later when extension gets disabled
@@ -57,48 +65,54 @@ class WorldwizardsExportToolsExtension(ExtensionFramework):
 
   
     async def _export_components_async(self, event, *args):
-        filepath:str = get_current_stage().GetRootLayer().realPath
-        if filepath is None:
-            print("Could not find root layer path "+filepath)
-            return;
-        materials_path:str = os.path.join(os.path.dirname(filepath),"Materials")
-        if not os.path.exists(materials_path):
-            print("Could not find materials file "+materials_path)
-            return; 
-        #copy materials to output root
-        new_root = await get_directory_async("/")
-        if new_root is None:
-            print("User canceled output ")
-            return;
-        new_materials_path = os.path.join(new_root,"Materials")
-        if os.path.exists(new_materials_path):
-            shutil.rmtree(new_materials_path)
-        shutil.copytree(materials_path,new_materials_path)
-        root:Usd.Prim = get_current_stage().GetPseudoRoot()
-        component_paths:list = []
-        recurse_list_components(root,component_paths) 
-        print("INFO: Components in tree:"+str(component_paths))
-        for path in component_paths:
-            component:Usd.Prim = get_current_stage().GetPrimAtPath(path)
+        try:
+            filepath:str = get_current_stage().GetRootLayer().realPath
+            if filepath is None:
+                print("Could not find root layer path "+filepath)
+                return;
+            materials_path:str = os.path.join(os.path.dirname(filepath),"Materials")
+            if not os.path.exists(materials_path):
+                print("Could not find materials file "+materials_path)
+                return; 
+            #copy materials to output root
+            new_root = await get_directory_async("/")
+            if new_root is None:
+                print("User canceled output ")
+                return;
+            new_materials_path = os.path.join(new_root,"Materials")
+            if os.path.exists(new_materials_path):
+                shutil.rmtree(new_materials_path)
+            shutil.copytree(materials_path,new_materials_path)
+            root:Usd.Prim = get_current_stage().GetPseudoRoot()
+            component_paths:list = []
+            recurse_list_components(root,component_paths) 
+            print("INFO: Components in tree:"+str(component_paths))
+            for path in component_paths:
+                component:Usd.Prim = get_current_stage().GetPrimAtPath(path)
 
-            self.export_component(component,new_root)
-        print("INFO: Exported "+str(len(component_paths))+" components to "+new_root)
-    
+                self.export_component(component,new_root)
+            print("INFO: Exported "+str(len(component_paths))+" components to "+new_root)
+        except Exception:
+            print(traceback.format_exc())
+            return
+
     def export_component(self,prim:Usd.Prim, outDir:str):
         print("INFO: Exporting component "+str(prim.GetPath()))
         if not (get_kind(prim)=="component"):
             print("Not a component "+str(prim.GetPath()))
             return
         #localize materials
-        material_paths_list = []
-        recurse_list_material_paths(prim,material_paths_list)
-        for material_path in material_paths_list:
-            self._localize_material(prim,material_path)
+        material_list = []
+        recurse_list_material_paths(prim,material_list)
+        print(str(prim.GetPath())+" has materials "+str(material_list))
+        for material_prim in material_list:
+            self._localize_material(prim,material_prim)
         #create directory
         componentPath:str = prim.GetPath()
         componentDir:str = os.path.join(outDir,str(componentPath))
         print("component dir "+componentDir)
-        os.makedirs(componentDir)
+        if not os.path.exists(componentDir):
+            os.makedirs(componentDir)
         '''#export prim
         self.export_prim(componentPath)
         #export materials
@@ -109,17 +123,22 @@ class WorldwizardsExportToolsExtension(ExtensionFramework):
         self.export_meshes(componentPath,componentDir)
         '''
 
-    def _localize_material(self,prim:Usd.Prim, material_path:str):
-        print("copying material from"+prim.GetPath()+" to "+material_path)
-        material:UsdShade.Material = UsdShade.Material(prim.GetStage().GetPrimAtPath(material_path))
-        material_name:str = material.GetName()
-        prim_path:str = prim.GetPath()
-        new_material_path: str = prim_path +"/"+material_name
+    def _localize_material(self,prim:Usd.Prim, material_prim:UsdShade.Material):
+        material_path:str = str(material_prim.GetPath())
+        prim_path:str = str(prim.GetPath())
+        print("copying material from"+prim_path+" to "+material_path)
+        material_name:str = material_path.split("/")[-1]
+        
+        new_material_path: str = prim_path +"/Looks/"+material_name
         if not material_path == new_material_path:
-            Usd.Prim.duplicate(material_path,new_material_path)
+            stage = get_current_stage()
+            usd.duplicate_prim(stage,material_path,
+                               new_material_path)
+            new_material_prim:UsdShade.Material = \
+                UsdShade.Material(stage.GetPrimAtPath(new_material_path))
             materialApi:UsdShade.MaterialBindingAPI = \
                     UsdShade.MaterialBindingAPI(prim)
-            materialApi.Bind(new_material_path)
+            materialApi.Bind(new_material_prim)
 
     def export_prim(self, path):
         prim:Usd.Prim = get_current_stage().GetPrimAtPath(path)
